@@ -72,17 +72,20 @@ public final class ProjectPropertiesProxy extends AbstractProjectProperties {
     private ProjectProperties getProperties() {
         ProjectProperties properties = propertiesRef.get();
         if (properties == null) {
-            File propertiesFile = XmlPropertiesPersister.getFileForProject(project);
-            properties = ProjectPropertiesManager.getProperties(propertiesFile, loadedSignal);
+            File[] propertiesFiles = XmlPropertiesPersister.getFilesForProject(project);
+            properties = ProjectPropertiesManager.getProperties(propertiesFiles, loadedSignal);
             if (propertiesRef.compareAndSet(null, properties)) {
-                project.addModelChangeListener(new ChangeListener() {
+                ChangeListener reloadTask = new ChangeListener() {
                     @Override
                     public void stateChanged(ChangeEvent e) {
-                        File propertiesFile = XmlPropertiesPersister.getFileForProject(project);
-                        propertiesRef.set(ProjectPropertiesManager.getProperties(propertiesFile, loadedSignal));
+                        File[] propertiesFiles = XmlPropertiesPersister.getFilesForProject(project);
+                        propertiesRef.set(ProjectPropertiesManager.getProperties(propertiesFiles, loadedSignal));
                         changes.fireChange();
                     }
-                });
+                };
+
+                project.addModelChangeListener(reloadTask);
+                project.addProfileChangeListener(reloadTask);
             }
 
             properties = propertiesRef.get();
@@ -190,6 +193,11 @@ public final class ProjectPropertiesProxy extends AbstractProjectProperties {
         }
 
         @Override
+        public void setValueFromSource(PropertySource<? extends ValueType> source) {
+            propertyRef.getProperty().setValueFromSource(source);
+        }
+
+        @Override
         public void setValue(ValueType value) {
             propertyRef.getProperty().setValue(value);
         }
@@ -197,6 +205,11 @@ public final class ProjectPropertiesProxy extends AbstractProjectProperties {
         @Override
         public ValueType getValue() {
             return propertyRef.getProperty().getValue();
+        }
+
+        @Override
+        public boolean isDefault() {
+            return propertyRef.getProperty().isDefault();
         }
 
         @Override

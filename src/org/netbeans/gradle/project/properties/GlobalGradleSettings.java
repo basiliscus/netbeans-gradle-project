@@ -296,6 +296,13 @@ public final class GlobalGradleSettings {
         }
 
         @Override
+        public void setValueFromSource(PropertySource<? extends ValueType> source) {
+            // Currently we ignore if the value of "source" changes for global
+            // properties. This might need to be considered in the future.
+            setValue(source.getValue());
+        }
+
+        @Override
         public void setValue(ValueType value) {
             String strValue = converter.toString(value);
             setValueFromString(strValue);
@@ -304,6 +311,14 @@ public final class GlobalGradleSettings {
         @Override
         public ValueType getValue() {
             return converter.toValue(getValueAsString());
+        }
+
+        @Override
+        public boolean isDefault() {
+            // We will assume that no value is the default value. This is a safe
+            // assumption for a global property because we never fall-back to
+            // anything from a global property.
+            return false;
         }
 
         @Override

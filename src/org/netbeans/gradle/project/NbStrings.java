@@ -129,8 +129,8 @@ public final class NbStrings {
         return NbBundle.getMessage(NbStrings.class, "LBL_CustomTaskTitle");
     }
 
-    public static String getManageTasksDlgTitle() {
-        return NbBundle.getMessage(NbStrings.class, "LBL_ManageTasksTitle");
+    public static String getManageTasksDlgTitle(String profile) {
+        return NbBundle.getMessage(NbStrings.class, "LBL_ManageTasksTitle", profile);
     }
 
     public static String getAddNewTaskDlgTitle() {
@@ -197,6 +197,26 @@ public final class NbStrings {
 
     public static String getBuildFailure(String tasks) {
         return NbBundle.getMessage(NbStrings.class, "MSG_BUILD_FAILURE", tasks);
+    }
+
+    public static String getDefaultProfileName() {
+        return NbBundle.getMessage(NbStrings.class, "LBL_DefaultProfile");
+    }
+
+    public static String getAddNewProfileCaption() {
+        return NbBundle.getMessage(NbStrings.class, "LBL_AddNewProfileCaption");
+    }
+
+    public static String getInvalidProfileName() {
+        return NbBundle.getMessage(NbStrings.class, "MSG_InvalidProfileName");
+    }
+
+    public static String getEmptyProfileName() {
+        return NbBundle.getMessage(NbStrings.class, "MSG_EmptyProfileName");
+    }
+
+    public static String getConfirmRemoveProfile(String profileName) {
+        return NbBundle.getMessage(NbStrings.class, "MSG_ConfirmRemoveProfile", profileName);
     }
 
     private NbStrings() {

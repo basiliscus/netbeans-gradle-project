@@ -2,6 +2,7 @@ package org.netbeans.gradle.project;
 
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
+import java.io.File;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.LinkedList;
@@ -21,9 +22,14 @@ import org.netbeans.gradle.project.model.GradleModelLoader;
 import org.netbeans.gradle.project.model.ModelLoadListener;
 import org.netbeans.gradle.project.model.ModelRetrievedListener;
 import org.netbeans.gradle.project.model.NbGradleModel;
+import org.netbeans.gradle.project.persistent.XmlPropertiesPersister;
 import org.netbeans.gradle.project.properties.GradleCustomizer;
+import org.netbeans.gradle.project.properties.NbGradleConfigProvider;
+import org.netbeans.gradle.project.properties.NbGradleConfiguration;
 import org.netbeans.gradle.project.properties.ProjectProperties;
+import org.netbeans.gradle.project.properties.ProjectPropertiesManager;
 import org.netbeans.gradle.project.properties.ProjectPropertiesProxy;
+import org.netbeans.gradle.project.properties.PropertiesLoadListener;
 import org.netbeans.gradle.project.query.GradleAnnotationProcessingQuery;
 import org.netbeans.gradle.project.query.GradleBinaryForSourceQuery;
 import org.netbeans.gradle.project.query.GradleCacheBinaryForSourceQuery;
@@ -87,6 +93,18 @@ public final class NbGradleProject implements Project {
         this.loadedAtLeastOnce = false;
         this.name = projectDir.getNameExt();
         this.exceptionDisplayer = new ExceptionDisplayer(NbStrings.getProjectErrorTitle(name));
+    }
+
+    public NbGradleConfiguration getCurrentProfile() {
+        return getLookup().lookup(NbGradleConfigProvider.class).getActiveConfiguration();
+    }
+
+    public void addProfileChangeListener(ChangeListener listener) {
+        getLookup().lookup(NbGradleConfigProvider.class).addActiveConfigChangeListener(listener);
+    }
+
+    public void removeProfileChangeListener(ChangeListener listener) {
+        getLookup().lookup(NbGradleConfigProvider.class).removeActiveConfigChangeListener(listener);
     }
 
     public void displayError(String errorText, Throwable exception, boolean setFocus) {
@@ -161,6 +179,17 @@ public final class NbGradleProject implements Project {
         return properties;
     }
 
+    public ProjectProperties getPropertiesForProfile(
+            String profile,
+            boolean useInheritance,
+            PropertiesLoadListener onLoadTask) {
+
+        File[] files = XmlPropertiesPersister.getFilesForProfile(this, profile);
+        return useInheritance ?
+                ProjectPropertiesManager.getProperties(files, onLoadTask)
+                : ProjectPropertiesManager.getProperties(files[0], onLoadTask);
+    }
+
     public ProjectProperties tryGetLoadedProperties() {
         if (properties.tryWaitForLoaded()) {
             return properties;
@@ -192,6 +221,7 @@ public final class NbGradleProject implements Project {
             Lookup newLookup = Lookups.fixed(new Object[] {
                 this,
                 state, //allow outside code to mark the project as needing saving
+                new NbGradleConfigProvider(this),
                 new GradleProjectInformation(this),
                 new GradleProjectLogicalViewProvider(this),
                 new GradleProjectSources(this),
