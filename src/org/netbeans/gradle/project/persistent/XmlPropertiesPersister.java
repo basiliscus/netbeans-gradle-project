@@ -1,27 +1,26 @@
 package org.netbeans.gradle.project.persistent;
 
 import java.io.File;
-import java.io.FilenameFilter;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
+import java.nio.charset.Charset;
+import java.util.LinkedList;
 import java.util.List;
-import java.util.Locale;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import javax.swing.SwingUtilities;
 import javax.swing.event.ChangeEvent;
 import javax.swing.event.ChangeListener;
+import org.netbeans.api.java.platform.JavaPlatform;
 import org.netbeans.gradle.project.NbGradleProject;
-import org.netbeans.gradle.project.model.NbGradleModel;
+import org.netbeans.gradle.project.properties.AbstractProjectProperties;
+import org.netbeans.gradle.project.properties.MutableProperty;
+import org.netbeans.gradle.project.properties.PredefinedTask;
 import org.netbeans.gradle.project.properties.ProjectProperties;
 import org.netbeans.gradle.project.properties.PropertiesSnapshot;
-import org.openide.filesystems.FileObject;
-import org.openide.filesystems.FileUtil;
+import org.netbeans.gradle.project.properties.PropertySource;
 
 public final class XmlPropertiesPersister implements PropertiesPersister {
-    private static final String SETTINGS_FILENAME = ".nb-gradle-properties";
-    private static final String PROFILE_FILE_NAME_SUFFIX = ".profile";
-    private static final String SETTINGS_DIR_NAME = ".nb-gradle";
-    private static final String PROFILE_DIRECTORY = "profiles";
+    private static final Logger LOGGER = Logger.getLogger(XmlPropertiesPersister.class.getName());
 
     private final File propertiesFile;
 
@@ -29,87 +28,6 @@ public final class XmlPropertiesPersister implements PropertiesPersister {
         if (propertiesFile == null) throw new NullPointerException("propertiesFile");
 
         this.propertiesFile = propertiesFile;
-    }
-
-    public static Collection<String> getAvailableProfiles(NbGradleProject project) {
-        File profileDir = getProfileDirectory(project);
-        if (!profileDir.isDirectory()) {
-            return Collections.emptySet();
-        }
-
-        File[] profileFiles = profileDir.listFiles(new FilenameFilter() {
-            @Override
-            public boolean accept(File dir, String name) {
-                return name.toLowerCase(Locale.ROOT).endsWith(PROFILE_FILE_NAME_SUFFIX);
-            }
-        });
-
-        if (profileFiles == null) {
-            return Collections.emptySet();
-        }
-
-        List<String> result = new ArrayList<String>(profileFiles.length);
-        int suffixLength = PROFILE_FILE_NAME_SUFFIX.length();
-        for (File profileFile: profileFiles) {
-            String fileName = profileFile.getName();
-            if (fileName.length() >= suffixLength) {
-                result.add(fileName.substring(0, fileName.length() - suffixLength));
-            }
-        }
-        return result;
-    }
-
-    public static File getSettingsDir(NbGradleProject project) {
-        File mainFile = getFileForProject(project);
-        File mainFileDir = mainFile.getParentFile();
-
-        return mainFileDir != null
-                ? new File(mainFileDir, SETTINGS_DIR_NAME)
-                : new File(SETTINGS_DIR_NAME);
-    }
-
-    private static File getProfileDirectory(NbGradleProject project) {
-        return new File(getSettingsDir(project), PROFILE_DIRECTORY);
-    }
-
-    public static File[] getFilesForProfile(NbGradleProject project, String profile) {
-        File mainFile = getFileForProject(project);
-
-        if (profile == null) {
-            return new File[]{mainFile};
-        }
-        else {
-            File mainFileDir = mainFile.getParentFile();
-
-            File profileFile = mainFileDir != null
-                    ? new File(mainFileDir, SETTINGS_DIR_NAME)
-                    : new File(SETTINGS_DIR_NAME);
-            profileFile = new File(profileFile, PROFILE_DIRECTORY);
-            profileFile = new File(profileFile, profile + PROFILE_FILE_NAME_SUFFIX);
-            return new File[]{profileFile, mainFile};
-        }
-    }
-
-    public static File[] getFilesForProject(NbGradleProject project) {
-        return getFilesForProfile(project, project.getCurrentProfile().getProfileName());
-    }
-
-    private static File getFileForProject(NbGradleProject project) {
-        NbGradleModel model = project.getAvailableModel();
-        FileObject settingsFile = model.getSettingsFile();
-        FileObject dir = settingsFile != null
-                ? settingsFile.getParent()
-                : project.getProjectDirectory();
-        if (dir == null) {
-            dir = project.getProjectDirectory();
-        }
-
-        File outputDir = FileUtil.toFile(dir);
-        if (outputDir == null) {
-            throw new IllegalArgumentException("Cannot get the properties file because the directory is missing: " + dir);
-        }
-
-        return new File(outputDir, SETTINGS_FILENAME);
     }
 
     private void checkEDT() {
@@ -137,21 +55,64 @@ public final class XmlPropertiesPersister implements PropertiesPersister {
         });
     }
 
+    private static <ValueType> PropertySetter<ValueType> newPropertySetter(
+            MutableProperty<ValueType> property,
+            PropertyGetter<ValueType> getter) {
+        return new PropertySetter<ValueType>(property, getter);
+    }
+
     @Override
     public void load(final ProjectProperties properties, final Runnable onDone) {
         checkEDT();
 
         // We must listen for changes, so that we do not overwrite properties
         // modified later.
-        final ChangeDetector platformChanged = new ChangeDetector();
-        final ChangeDetector sourceEncodingChanged = new ChangeDetector();
-        final ChangeDetector sourceLevelChanged = new ChangeDetector();
-        final ChangeDetector commonTasksChanged = new ChangeDetector();
 
-        properties.getPlatform().addChangeListener(platformChanged);
-        properties.getSourceEncoding().addChangeListener(sourceEncodingChanged);
-        properties.getSourceLevel().addChangeListener(sourceLevelChanged);
-        properties.getCommonTasks().addChangeListener(commonTasksChanged);
+        final List<PropertySetter<?>> setters = new LinkedList<PropertySetter<?>>();
+
+        // Just add a new element to the list when a new property needs to be
+        // saved.
+        setters.add(newPropertySetter(properties.getPlatform(), new PropertyGetter<JavaPlatform>() {
+            @Override
+            public PropertySource<JavaPlatform> get(PropertiesSnapshot snapshot) {
+                return snapshot.getPlatform();
+            }
+        }));
+        setters.add(newPropertySetter(properties.getSourceEncoding(), new PropertyGetter<Charset>() {
+            @Override
+            public PropertySource<Charset> get(PropertiesSnapshot snapshot) {
+                return snapshot.getSourceEncoding();
+            }
+        }));
+        setters.add(newPropertySetter(properties.getSourceLevel(), new PropertyGetter<String>() {
+            @Override
+            public PropertySource<String> get(PropertiesSnapshot snapshot) {
+                return snapshot.getSourceLevel();
+            }
+        }));
+        setters.add(newPropertySetter(properties.getCommonTasks(), new PropertyGetter<List<PredefinedTask>>() {
+            @Override
+            public PropertySource<List<PredefinedTask>> get(PropertiesSnapshot snapshot) {
+                return snapshot.getCommonTasks();
+            }
+        }));
+        for (final String command: AbstractProjectProperties.getCustomizableCommands()) {
+            MutableProperty<PredefinedTask> taskProperty = properties.tryGetBuiltInTask(command);
+            if (taskProperty == null) {
+                LOGGER.log(Level.WARNING, "tryGetBuiltInTask returned null for command: {0}", command);
+                continue;
+            }
+            setters.add(newPropertySetter(taskProperty, new PropertyGetter<PredefinedTask>() {
+                @Override
+                public PropertySource<PredefinedTask> get(PropertiesSnapshot snapshot) {
+                    return snapshot.tryGetBuiltInTask(command);
+                }
+            }));
+        }
+
+        for (PropertySetter<?> setter: setters) {
+            setter.start();
+        }
 
         NbGradleProject.PROJECT_PROCESSOR.execute(new Runnable() {
             @Override
@@ -162,17 +123,8 @@ public final class XmlPropertiesPersister implements PropertiesPersister {
                     SwingUtilities.invokeLater(new Runnable() {
                         @Override
                         public void run() {
-                            if (!sourceLevelChanged.hasChanged()) {
-                                properties.getSourceLevel().setValueFromSource(snapshot.getSourceLevel());
-                            }
-                            if (!platformChanged.hasChanged()) {
-                                properties.getPlatform().setValueFromSource(snapshot.getPlatform());
-                            }
-                            if (!sourceEncodingChanged.hasChanged()) {
-                                properties.getSourceEncoding().setValueFromSource(snapshot.getSourceEncoding());
-                            }
-                            if (!commonTasksChanged.hasChanged()) {
-                                properties.getCommonTasks().setValueFromSource(snapshot.getCommonTasks());
+                            for (PropertySetter<?> setter: setters) {
+                                setter.set(snapshot);
                             }
 
                             if (onDone != null) {
@@ -187,16 +139,61 @@ public final class XmlPropertiesPersister implements PropertiesPersister {
                     SwingUtilities.invokeLater(new Runnable() {
                         @Override
                         public void run() {
-                            properties.getPlatform().removeChangeListener(platformChanged);
-                            properties.getSourceEncoding().removeChangeListener(sourceEncodingChanged);
-                            properties.getSourceLevel().removeChangeListener(sourceLevelChanged);
-                            properties.getCommonTasks().removeChangeListener(commonTasksChanged);
+                            for (PropertySetter<?> setter: setters) {
+                                setter.done();
+                            }
                         }
                     });
                 }
 
             }
         });
+    }
+
+    private interface PropertyGetter<ValueType> {
+        public PropertySource<ValueType> get(PropertiesSnapshot snapshot);
+    }
+
+    private static class PropertySetter<ValueType> {
+        private final MutableProperty<ValueType> property;
+        private final PropertyGetter<? extends ValueType> getter;
+        private final AtomicReference<ChangeDetector> detectorRef;
+
+        public PropertySetter(MutableProperty<ValueType> property, PropertyGetter<? extends ValueType> getter) {
+            assert property != null;
+            this.property = property;
+            this.getter = getter;
+            this.detectorRef = new AtomicReference<ChangeDetector>(new ChangeDetector());
+        }
+
+        private ChangeDetector getDectector() {
+            ChangeDetector detector = detectorRef.get();
+            if (detector == null) {
+                throw new IllegalStateException();
+            }
+            return detector;
+        }
+
+        public void start() {
+            property.addChangeListener(getDectector());
+        }
+
+        public void set(PropertiesSnapshot snapshot) {
+            PropertySource<? extends ValueType> source = getter.get(snapshot);
+            if (source != null) {
+                property.setValueFromSource(source);
+            }
+            else {
+                LOGGER.warning("null property source.");
+            }
+        }
+
+        public void done() {
+            ChangeDetector detector = detectorRef.getAndSet(null);
+            if (detector != null) {
+                property.removeChangeListener(detector);
+            }
+        }
     }
 
     private static class ChangeDetector implements ChangeListener {

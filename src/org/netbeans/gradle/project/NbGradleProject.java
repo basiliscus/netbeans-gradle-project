@@ -22,7 +22,6 @@ import org.netbeans.gradle.project.model.GradleModelLoader;
 import org.netbeans.gradle.project.model.ModelLoadListener;
 import org.netbeans.gradle.project.model.ModelRetrievedListener;
 import org.netbeans.gradle.project.model.NbGradleModel;
-import org.netbeans.gradle.project.persistent.XmlPropertiesPersister;
 import org.netbeans.gradle.project.properties.GradleCustomizer;
 import org.netbeans.gradle.project.properties.NbGradleConfigProvider;
 import org.netbeans.gradle.project.properties.NbGradleConfiguration;
@@ -30,6 +29,7 @@ import org.netbeans.gradle.project.properties.ProjectProperties;
 import org.netbeans.gradle.project.properties.ProjectPropertiesManager;
 import org.netbeans.gradle.project.properties.ProjectPropertiesProxy;
 import org.netbeans.gradle.project.properties.PropertiesLoadListener;
+import org.netbeans.gradle.project.properties.SettingsFiles;
 import org.netbeans.gradle.project.query.GradleAnnotationProcessingQuery;
 import org.netbeans.gradle.project.query.GradleBinaryForSourceQuery;
 import org.netbeans.gradle.project.query.GradleCacheBinaryForSourceQuery;
@@ -40,6 +40,7 @@ import org.netbeans.gradle.project.query.GradleSourceEncodingQuery;
 import org.netbeans.gradle.project.query.GradleSourceForBinaryQuery;
 import org.netbeans.gradle.project.query.GradleSourceLevelQueryImplementation;
 import org.netbeans.gradle.project.query.GradleUnitTestFinder;
+import org.netbeans.gradle.project.tasks.GradleDaemonManager;
 import org.netbeans.gradle.project.view.GradleActionProvider;
 import org.netbeans.gradle.project.view.GradleProjectLogicalViewProvider;
 import org.netbeans.spi.project.ProjectState;
@@ -75,7 +76,7 @@ public final class NbGradleProject implements Project {
 
     private final AtomicReference<ProjectInfoRef> loadErrorRef;
 
-    private volatile boolean loadedAtLeastOnce;
+    private final WaitableSignal loadedAtLeastOnceSignal;
 
     public NbGradleProject(FileObject projectDir, ProjectState state) throws IOException {
         this.projectDir = projectDir;
@@ -90,7 +91,7 @@ public final class NbGradleProject implements Project {
         this.currentModelRef = new AtomicReference<NbGradleModel>(GradleModelLoader.createEmptyModel(projectDir));
 
         this.cpProvider = new GradleClassPathProvider(this);
-        this.loadedAtLeastOnce = false;
+        this.loadedAtLeastOnceSignal = new WaitableSignal();
         this.name = projectDir.getNameExt();
         this.exceptionDisplayer = new ExceptionDisplayer(NbStrings.getProjectErrorTitle(name));
     }
@@ -150,14 +151,25 @@ public final class NbGradleProject implements Project {
     }
 
     public boolean hasLoadedProject() {
-        return loadedAtLeastOnce;
+        return loadedAtLeastOnceSignal.isSignaled();
+    }
+
+    public boolean tryWaitForLoadedProject() {
+        if (GradleDaemonManager.isRunningExclusiveTask()) {
+            throw new IllegalStateException("Cannot wait for loading a project"
+                    + " while blocking daemon tasks from being executed."
+                    + " Possible dead-lock.");
+        }
+
+        // Ensure that the project is started to be loaded.
+        getCurrentModel();
+        return loadedAtLeastOnceSignal.tryWaitForSignal();
     }
 
     private void onModelChange() {
         assert SwingUtilities.isEventDispatchThread();
 
         try {
-            loadedAtLeastOnce = true;
             modelChanges.fireChange();
         } finally {
             GradleCacheSourceForBinaryQuery.notifyCacheChange();
@@ -184,7 +196,7 @@ public final class NbGradleProject implements Project {
             boolean useInheritance,
             PropertiesLoadListener onLoadTask) {
 
-        File[] files = XmlPropertiesPersister.getFilesForProfile(this, profile);
+        File[] files = SettingsFiles.getFilesForProfile(this, profile);
         return useInheritance ?
                 ProjectPropertiesManager.getProperties(files, onLoadTask)
                 : ProjectPropertiesManager.getProperties(files[0], onLoadTask);
@@ -221,7 +233,7 @@ public final class NbGradleProject implements Project {
             Lookup newLookup = Lookups.fixed(new Object[] {
                 this,
                 state, //allow outside code to mark the project as needing saving
-                new NbGradleConfigProvider(this),
+                NbGradleConfigProvider.getConfigProvider(this),
                 new GradleProjectInformation(this),
                 new GradleProjectLogicalViewProvider(this),
                 new GradleProjectSources(this),
@@ -401,6 +413,8 @@ public final class NbGradleProject implements Project {
     private class ModelRetrievedListenerImpl implements ModelRetrievedListener {
         @Override
         public void onComplete(NbGradleModel model, Throwable error) {
+            loadedAtLeastOnceSignal.signal();
+
             boolean hasChanged = false;
             if (model != null) {
                 NbGradleModel lastModel = currentModelRef.getAndSet(model);
