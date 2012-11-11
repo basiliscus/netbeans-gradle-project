@@ -6,6 +6,7 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -42,7 +43,7 @@ public final class NbGradleConfigProvider implements ProjectConfigurationProvide
         this.changeSupport = new PropertyChangeSupport(this);
         this.activeConfigChanges = new ChangeSupport(this);
         this.activeConfig = new AtomicReference<NbGradleConfiguration>(NbGradleConfiguration.DEFAULT_CONFIG);
-        this.configs = Collections.newSetFromMap(new ConcurrentHashMap<NbGradleConfiguration, Boolean>());
+        this.configs = Collections.synchronizedSet(new LinkedHashSet<NbGradleConfiguration>());
         this.configs.add(NbGradleConfiguration.DEFAULT_CONFIG);
     }
 
